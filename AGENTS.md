@@ -13,6 +13,14 @@
 | Run MVP loop | `source .venv/bin/activate && python voice_loop.py` |
 | Piper smoke test | `echo "Hello" \| piper --model en_US-lessac-medium.onnx --output_file test.wav` |
 
+### Configuration Layer
+- Config lives in `config/default.json`. Key fields:
+  - `active_profile`: default profile name (can override with `LVCA_PROFILE` env).
+  - `profiles.<name>`: per-profile model choices (`llm_model`, `whisper_model`, `piper_model`), audio settings, temperature, history caps.
+  - `wake_word`, `timeouts`, `artifacts_dir`.
+- Override config file path via `LVCA_CONFIG=/path/to/custom.json`.
+- Example to run snappy profile: `LVCA_PROFILE=snappy python voice_loop.py`.
+
 ### Runtime Requirements
 - `whisper.cpp/build/bin/whisper-cli` plus `whisper.cpp/models/ggml-small.bin`.
 - `ollama serve` running locally; `ollama pull mistral:latest`.

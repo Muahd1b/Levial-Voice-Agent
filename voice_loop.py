@@ -8,6 +8,7 @@ Requires `sounddevice` and `numpy` (see requirements.txt).
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import subprocess
@@ -26,11 +27,39 @@ except ImportError as exc:  # pragma: no cover
 import shutil
 
 BASE_DIR = Path(__file__).resolve().parent
-ARTIFACT_DIR = BASE_DIR / "artifacts"
+
+def load_config() -> dict:
+    config_path = Path(os.environ.get("LVCA_CONFIG", BASE_DIR / "config" / "default.json"))
+    if not config_path.exists():
+        print(f"[x] Config file not found: {config_path}. Create one or set LVCA_CONFIG.", file=sys.stderr)
+        sys.exit(1)
+    with config_path.open() as fh:
+        config = json.load(fh)
+
+    profile_name = os.environ.get("LVCA_PROFILE", config.get("active_profile"))
+    profiles = config.get("profiles", {})
+    if profile_name not in profiles:
+        print(f"[x] Profile '{profile_name}' missing in config.", file=sys.stderr)
+        sys.exit(1)
+
+    profile = profiles[profile_name]
+    print(f"[config] Loaded profile '{profile_name}': {profile.get('description', '')}")
+
+    return {
+        "profile_name": profile_name,
+        "profile": profile,
+        "artifacts_dir": Path(config.get("artifacts_dir", "artifacts")),
+        "wake_word": config.get("wake_word", {}),
+        "timeouts": config.get("timeouts", {}),
+    }
+
+CONFIG = load_config()
+PROFILE = CONFIG["profile"]
+ARTIFACT_DIR = (BASE_DIR / CONFIG["artifacts_dir"]).resolve()
 ARTIFACT_DIR.mkdir(exist_ok=True)
 
 WHISPER_BIN = BASE_DIR / "whisper.cpp" / "build" / "bin" / "whisper-cli"
-WHISPER_MODEL = BASE_DIR / "whisper.cpp" / "models" / "ggml-small.bin"
+WHISPER_MODEL = BASE_DIR / PROFILE.get("whisper_model", "whisper.cpp/models/ggml-small.bin")
 WHISPER_DYLD_PARTS = [
     BASE_DIR / "whisper.cpp" / "build" / "src",
     BASE_DIR / "whisper.cpp" / "build" / "ggml" / "src",
@@ -38,11 +67,13 @@ WHISPER_DYLD_PARTS = [
     BASE_DIR / "whisper.cpp" / "build" / "ggml" / "src" / "ggml-metal",
 ]
 
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "mistral:latest")
-PIPER_MODEL = Path(os.environ.get("PIPER_MODEL", BASE_DIR / "en_US-lessac-medium.onnx"))
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", PROFILE.get("llm_model", "mistral:latest"))
+PIPER_MODEL = Path(os.environ.get("PIPER_MODEL", BASE_DIR / PROFILE.get("piper_model", "en_US-lessac-medium.onnx")))
 
-MIC_SAMPLE_RATE = 16_000
-MIC_CHANNELS = 1
+MIC_SAMPLE_RATE = PROFILE.get("mic_sample_rate", 16_000)
+MIC_CHANNELS = PROFILE.get("mic_channels", 1)
+MAX_HISTORY_TURNS = PROFILE.get("max_history_turns", 6)
+RECORDING_MAX_SEC = CONFIG["timeouts"].get("recording_max_sec")
 
 
 def _require_file(path: Path, description: str) -> None:
@@ -70,6 +101,8 @@ def record_utterance() -> Path | None:
             print(f"[audio] {status}", file=sys.stderr)
         audio_queue.put(indata.copy())
 
+    start_time = time.time()
+
     with sd.InputStream(
         samplerate=MIC_SAMPLE_RATE,
         channels=MIC_CHANNELS,
@@ -82,6 +115,9 @@ def record_utterance() -> Path | None:
                 frames.append(chunk)
             except queue.Empty:
                 continue
+            if RECORDING_MAX_SEC and (time.time() - start_time) >= RECORDING_MAX_SEC:
+                print(f"[i] Recording limit reached ({RECORDING_MAX_SEC}s).")
+                stop_event.set()
 
     if not frames:
         print("[!] No audio captured.")
@@ -182,8 +218,8 @@ def play_audio(audio_path: Path) -> None:
 
 def main() -> None:
     _require_file(WHISPER_BIN, "Whisper CLI binary (build whisper.cpp)")
-    _require_file(WHISPER_MODEL, "Whisper model ggml-small.bin")
-    _require_file(PIPER_MODEL, "Piper voice model")
+    _require_file(WHISPER_MODEL, f"Whisper model {WHISPER_MODEL}")
+    _require_file(PIPER_MODEL, f"Piper voice model {PIPER_MODEL}")
 
     history: list[tuple[str, str]] = []
     print("Local Voice Chat Agent")
@@ -219,6 +255,9 @@ def main() -> None:
 
         history.append(("user", transcript))
         history.append(("assistant", reply))
+        if MAX_HISTORY_TURNS and len(history) > MAX_HISTORY_TURNS:
+            # Keep most recent turns only
+            history = history[-MAX_HISTORY_TURNS:]
 
         try:
             audio_reply = synthesize_speech(reply)

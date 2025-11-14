@@ -91,6 +91,7 @@ Experience Principles
 
 Component Overview
 - Configuration Layer: defines profiles (“Snappy”, “Balanced”, “Quality”) mapping to ASR/LLM/TTS choices, language behavior (auto/fixed), wake-word parameters, and timeout values. Acts as a single source of truth consumed by every subsystem.
+  - MVP ships with profile `balanced-exchange` (Whisper small + mistral:latest + Piper Lessac) stored in `config/default.json`. Profiles are data-driven and selectable via config/env.
 - Audio Capture: records mic input using default device at profile-defined sample rates; hands off audio chunks to wake word or ASR.
 - Wake-Word Engine: continuously monitors audio (when enabled). On detection, transitions the orchestrator to LISTENING. Supports disablement when push-to-talk is preferred.
 - Push-to-Talk Controller: keyboard/button listener that bypasses wake word to manually enter LISTENING.
