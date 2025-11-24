@@ -21,5 +21,65 @@
     "recording_max_sec": 30,
     "thinking_max_sec": 10
   },
+  "mcp_servers": {
+    "filesystem": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/jonasknppel/voice-agent/artifacts"]
+    },
+    "brave-search": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "YOUR_API_KEY_HERE"
+      }
+    },
+    "calendar": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "levial.tools.calendar_server"]
+    },
+    "todoist": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "levial.tools.todoist_server"],
+      "env": {
+        "TODOIST_API_TOKEN": "YOUR_TOKEN_HERE"
+      }
+    },
+    "email": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "levial.tools.email_manager"],
+      "env": {
+        "EMAIL_USER": "YOUR_EMAIL",
+        "EMAIL_PASSWORD": "YOUR_PASSWORD"
+      }
+    },
+    "web_scraper": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "levial.tools.web_scraper"]
+    },
+    "aviation": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "levial.tools.aviation_server"],
+      "env": {
+        "CHECKWX_API_KEY": "YOUR_API_KEY_HERE"
+      }
+    },
+    "scheduler": {
+      "enabled": true,
+      "command": "python",
+      "args": ["-m", "levial.tools.scheduler"]
+    },
+    "flashcards": {
+      "enabled": true,
+      "command": "python",
+      "args": ["-m", "levial.tools.flashcards"]
+    }
+  },
   "artifacts_dir": "artifacts"
 }

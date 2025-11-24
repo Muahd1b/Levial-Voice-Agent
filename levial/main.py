@@ -1,4 +1,8 @@
+import os
 import sys
+# Set this before importing libraries that use tokenizers (like chromadb)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from pathlib import Path
 from .config import ConfigManager
 from .orchestrator import ConversationOrchestrator
@@ -8,7 +12,7 @@ def main():
     try:
         config_manager = ConfigManager(base_dir)
         orchestrator = ConversationOrchestrator(config_manager)
-        orchestrator.run_loop()
+        orchestrator.run()
     except KeyboardInterrupt:
         print("\nGoodbye!")
         sys.exit(0)

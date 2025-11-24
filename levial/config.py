@@ -61,3 +61,23 @@ class ConfigManager:
     @property
     def recording_max_sec(self) -> float | None:
         return self.config.get("timeouts", {}).get("recording_max_sec")
+
+    @property
+    def config_data(self) -> Dict[str, Any]:
+        return self.config
+
+    @property
+    def wake_word_model_paths(self) -> list[str]:
+        # Use absolute path to our local models directory
+        # We load both "hey_jarvis" (activation) and "alexa" (termination proxy)
+        jarvis_path = self.base_dir / "levial" / "models" / "hey_jarvis_v0.1.onnx"
+        alexa_path = self.base_dir / "levial" / "models" / "alexa_v0.1.onnx"
+        # Only return paths that exist to avoid errors if alexa wasn't downloaded
+        paths = [str(jarvis_path)]
+        if alexa_path.exists():
+            paths.append(str(alexa_path))
+        return paths
+
+    @property
+    def wake_word_threshold(self) -> float:
+        return self.profile.get("wake_word_threshold", 0.5)

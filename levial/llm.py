@@ -5,11 +5,24 @@ class OllamaLLM:
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def build_prompt(self, history: List[Tuple[str, str]], user_text: str) -> str:
-        lines = [
-            "You are Local Voice Chat Agent, a concise helpful companion. "
-            "Answer conversationally in 1-3 sentences.",
-        ]
+    def build_prompt(self, history: List[Tuple[str, str]], user_text: str, context: str = "", tools_json: str = "") -> str:
+        system_prompt = (
+            "You are Levial, a capable and intelligent voice assistant. "
+            "You have access to external tools to help the user. "
+            "Use these tools silently and naturally to fulfill requests. "
+            "Do NOT list your tools or explain your capabilities unless explicitly asked. "
+            "Answer conversationally and concisely (1-3 sentences)."
+        )
+        
+        lines = [system_prompt]
+        
+        if tools_json:
+            lines.append(f"\nAVAILABLE TOOLS (Use JSON to call):\n{tools_json}\n")
+            lines.append("To call a tool, output ONLY a JSON object: {\"tool\": \"tool_name\", \"server\": \"server_name\", \"arguments\": {...}}")
+
+        if context:
+            lines.append(f"\nCONTEXT:\n{context}\n")
+            
         for role, content in history:
             lines.append(f"{role.upper()}: {content}")
         lines.append(f"USER: {user_text}")

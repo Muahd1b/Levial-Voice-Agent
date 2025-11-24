@@ -1,13 +1,49 @@
 import sys
+import time
+import asyncio
 import subprocess
-from typing import List, Tuple
+import json
+from typing import List, Tuple, Dict, Any, Callable
 from pathlib import Path
+import queue
+import sounddevice as sd
+import numpy as np
+import threading
 
 from .config import ConfigManager
 from .audio import AudioCapture, AudioPlayer
 from .asr import WhisperASR
 from .tts import PiperTTS
 from .llm import OllamaLLM
+from .mcp_client import MCPClient
+from .wake_word import WakeWordListener, SpeechDetector
+
+from .memory.manager import MemoryManager
+
+class InputListener:
+    def __init__(self, callback: Callable[[], None]):
+        self.callback = callback
+        self.thread = threading.Thread(target=self._input_loop, daemon=True)
+        self.running = False
+
+    def start(self):
+        self.running = True
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        # Cannot easily kill input(), so we just let it be daemon
+
+    def _input_loop(self):
+        print("Press 'q' + Enter at any time to quit.")
+        while self.running:
+            try:
+                line = sys.stdin.readline()
+                if line and line.strip().lower() in ['q', 'quit', 'exit']:
+                    self.callback()
+                    break
+            except ValueError:
+                pass
 
 class ConversationOrchestrator:
     def __init__(self, config_manager: ConfigManager):
@@ -27,72 +63,282 @@ class ConversationOrchestrator:
             base_dir=self.config.base_dir
         )
         self.llm = OllamaLLM(model_name=self.config.llm_model_name)
+        self.mcp_client = MCPClient(self.config.config_data)
+        self.memory_manager = MemoryManager(self.config.base_dir)
         self.history: List[Tuple[str, str]] = []
+        
+        # Audio Player instance
+        self.audio_player = AudioPlayer()
+
+        # Wake Word & VAD
+        self.wake_event = threading.Event()
+        self.detected_wake_word = None
+        
+        def wake_callback(model_name: str):
+            self.detected_wake_word = model_name
+            self.wake_event.set()
+
+        self.wake_listener = WakeWordListener(
+            callback=wake_callback,
+            model_paths=self.config.wake_word_model_paths
+        )
+        self.speech_detector = SpeechDetector()
+        
+        # Shutdown Control
+        self.shutdown_event = threading.Event()
+        self.input_listener = InputListener(callback=self.shutdown_event.set)
+
+    async def start(self):
+        """Async entry point to initialize MCP and run the loop."""
+        print("Initializing MCP Client...")
+        await self.mcp_client.start()
+        
+        self.input_listener.start()
+        await self.run_loop()
+
+        print("Shutting down MCP Client...")
+        await self.mcp_client.stop()
+        self.input_listener.stop()
 
     def run(self):
-        print("Levial - Local Voice Assistant")
-        print("Ensure `ollama serve` is running and Piper/Whisper paths are valid.")
-        print("Controls: press Enter to start speaking, Enter again to stop, 'q' to quit.")
+        """Entry point for the main script."""
+        try:
+            asyncio.run(self.start())
+        except KeyboardInterrupt:
+            print("\nStopped by user.")
 
-        while True:
-            user_cmd = input("\nPress Enter to speak or type 'q' to quit: ").strip().lower()
-            if user_cmd in {"q", "quit", "exit"}:
-                print("Goodbye!")
-                break
-
-            audio_path = self.audio_capture.record_until_enter(
-                output_path=self.config.artifacts_dir / f"utterance_{int(sys.time()) if 'sys' in locals() and hasattr(sys, 'time') else 0}.wav" # fixme: sys.time doesn't exist, use time.time
-            )
-            # Correction: I need to import time in this file or pass it. 
-            # Actually, let's fix the import in the next step or just use a timestamp generator.
-            # I'll re-write this file content correctly in the tool call.
-            pass 
-
-    def run_loop(self):
-        # Re-implementing run logic with correct imports
-        import time
+    def _get_audio_stream(self, q: queue.Queue):
+        def callback(indata, frames, time, status):
+            if status:
+                print(status, file=sys.stderr)
+            # Flatten to 1D array
+            q.put(indata.flatten())
         
-        print("Levial - Local Voice Assistant")
-        print("Ensure `ollama serve` is running and Piper/Whisper paths are valid.")
-        print("Controls: press Enter to start speaking, Enter again to stop, 'q' to quit.")
+        return sd.InputStream(
+            samplerate=16000, # openWakeWord expects 16k
+            channels=1,
+            dtype="int16",    # openWakeWord works best with int16
+            blocksize=1280,   # Force 1280 samples per chunk (80ms)
+            callback=callback
+        )
 
-        while True:
-            user_cmd = input("\nPress Enter to speak or type 'q' to quit: ").strip().lower()
-            if user_cmd in {"q", "quit", "exit"}:
-                print("Goodbye!")
+    async def run_loop(self):
+        print("Levial - Local Voice Assistant (v2.0 Agentic)")
+        print("Say 'Hey Jarvis' (proxy for Levial) to wake me up.")
+        print("Say 'Alexa' (proxy for Goodbye) to exit immediately.")
+        print("Say 'Thank you' to stop speaking.")
+
+        while not self.shutdown_event.is_set():
+            # --- STATE: IDLE (Listening for Wake Word) ---
+            print("[State] IDLE - Waiting for wake word...")
+            self.wake_event.clear()
+            self.detected_wake_word = None
+            
+            audio_q = queue.Queue()
+            stream = self._get_audio_stream(audio_q)
+            
+            def stream_callback(n):
+                try:
+                    return audio_q.get(timeout=0.1)
+                except queue.Empty:
+                    return None
+
+            with stream:
+                self.wake_listener.start(stream_callback)
+                
+                # Wait for wake word OR shutdown
+                while not self.wake_event.is_set() and not self.shutdown_event.is_set():
+                    self.wake_event.wait(timeout=0.5)
+                
+                self.wake_listener.stop()
+            
+            if self.shutdown_event.is_set():
                 break
 
+            print(f"[!] Wake Word Detected: {self.detected_wake_word}")
+            
+            if self.detected_wake_word and "alexa" in self.detected_wake_word.lower():
+                print("Goodbye! (Triggered by 'Alexa')")
+                break
+            
+            # --- STATE: LISTENING (User Command) ---
+            print("[State] LISTENING - Speak now...")
             timestamp = int(time.time())
             audio_path = self.config.artifacts_dir / f"utterance_{timestamp}.wav"
             
-            recorded_path = self.audio_capture.record_until_enter(output_path=audio_path)
+            # Record until silence
+            recorded_path = await asyncio.to_thread(
+                self.audio_capture.record_until_silence, 
+                output_path=audio_path,
+                silence_threshold=0.01, # Adjust based on mic
+                silence_duration=1.5
+            )
+            
+            if self.shutdown_event.is_set():
+                break
+            
             if not recorded_path:
+                print("[!] No audio recorded.")
                 continue
 
             try:
-                transcript = self.asr.transcribe(recorded_path)
+                transcript = await asyncio.to_thread(self.asr.transcribe, recorded_path)
             except subprocess.CalledProcessError as exc:
                 print(f"[x] Whisper failed: {exc}")
                 continue
 
             if not transcript:
-                print("[!] Empty transcript, skipping.")
+                print("[!] Empty transcript.")
                 continue
 
-            prompt = self.llm.build_prompt(self.history, transcript)
-            try:
-                reply = self.llm.query(prompt)
-            except subprocess.CalledProcessError as exc:
-                print(f"[x] Ollama error: {exc.stderr}")
-                continue
+            print(f"> User: {transcript}")
+            
+            # Check for Termination
+            if "goodbye" in transcript.lower():
+                print("Goodbye!")
+                break
 
             self.history.append(("user", transcript))
-            self.history.append(("assistant", reply))
-            if self.config.max_history_turns and len(self.history) > self.config.max_history_turns:
-                self.history = self.history[-self.config.max_history_turns:]
+            
+            # --- Memory Retrieval ---
+            context = self.memory_manager.get_relevant_context(transcript)
+            
+            # --- Agentic Loop ---
+            max_turns = 5
+            current_turn = 0
+            
+            while current_turn < max_turns and not self.shutdown_event.is_set():
+                current_turn += 1
+                
+                tools_json = json.dumps(self.mcp_client.tools, indent=2)
+                full_prompt = self.llm.build_prompt(self.history, transcript, context=context, tools_json=tools_json) 
 
-            try:
-                audio_reply = self.tts.synthesize(reply, self.config.artifacts_dir)
-                AudioPlayer.play(audio_reply)
-            except subprocess.CalledProcessError as exc:
-                print(f"[x] Piper/playback error: {exc}")
+                print(f"[State] THINKING (Turn {current_turn})...")
+                try:
+                    reply = await asyncio.to_thread(self.llm.query, full_prompt)
+                except subprocess.CalledProcessError as exc:
+                    print(f"[x] Ollama error: {exc.stderr}")
+                    break
+
+                # Check for Tool Call (Same logic as before)
+                try:
+                    start_idx = reply.find('{')
+                    end_idx = reply.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        potential_json = reply[start_idx:end_idx+1]
+                        tool_call = json.loads(potential_json)
+                        if "tool" in tool_call and "arguments" in tool_call:
+                            tool_name = tool_call["tool"]
+                            server_name = tool_call.get("server")
+                            args = tool_call["arguments"]
+                            print(f"[!] Tool Call: {tool_name} on {server_name}")
+                            if server_name:
+                                result = await self.mcp_client.call_tool(server_name, tool_name, args)
+                                observation = str(result)
+                            else:
+                                observation = "Error: Server name missing."
+                            self.history.append(("assistant", reply))
+                            self.history.append(("system", f"Tool Output: {observation}"))
+                            continue
+                except json.JSONDecodeError:
+                    pass
+
+                print(f"> Assistant: {reply}")
+                self.history.append(("assistant", reply))
+                self.memory_manager.add_interaction("user", transcript)
+                self.memory_manager.add_interaction("assistant", reply)
+                
+                # --- STATE: SPEAKING (with Barge-In) ---
+                print("[State] SPEAKING...")
+                try:
+                    audio_reply = await asyncio.to_thread(self.tts.synthesize, reply, self.config.artifacts_dir)
+                    
+                    # Start Playback
+                    self.audio_player.play(audio_reply)
+                    
+                    # Start Barge-In Monitoring
+                    barge_q = queue.Queue()
+                    barge_stream = self._get_audio_stream(barge_q)
+                    
+                    def barge_callback(n):
+                        try:
+                            return barge_q.get(timeout=0.1)
+                        except queue.Empty:
+                            return None
+
+                    with barge_stream:
+                        self.speech_detector.start(barge_callback)
+                        
+                        # Wait while playing OR speech detected OR shutdown
+                        while self.audio_player.current_process and self.audio_player.current_process.poll() is None:
+                            if self.shutdown_event.is_set():
+                                self.audio_player.stop()
+                                break
+                                
+                            if self.speech_detector.wait_for_speech(timeout=0.1):
+                                print("[!] Barge-In Detected! Stopping TTS.")
+                                self.audio_player.stop()
+                                
+                                # Capture the interruption
+                                print("Listening to interruption...")
+                                int_path = self.config.artifacts_dir / f"interruption_{int(time.time())}.wav"
+                                break
+                        
+                        self.speech_detector.stop()
+                    
+                    if self.shutdown_event.is_set():
+                        break
+
+                    # If we broke out due to speech, record it
+                    if self.audio_player.current_process is None and self.speech_detector.speech_detected_event.is_set():
+                        # Stop detector to stop consuming queue
+                        self.speech_detector.stop()
+                        
+                        # Get buffered audio (start of utterance)
+                        frames = self.speech_detector.get_buffer()
+                        
+                        # Continue recording from the SAME queue until silence
+                        print("Listening to interruption...")
+                        silence_threshold = 0.01
+                        silence_duration = 1.0
+                        last_sound_time = time.time()
+                        is_speaking = True # We know they started speaking
+                        
+                        while not self.shutdown_event.is_set():
+                            try:
+                                chunk = barge_q.get(timeout=0.1)
+                                frames.append(chunk)
+                                
+                                # Silence Detection
+                                rms = np.sqrt(np.mean(chunk**2))
+                                if rms > silence_threshold:
+                                    last_sound_time = time.time()
+                                
+                                if (time.time() - last_sound_time > silence_duration):
+                                    print("[i] Silence detected.")
+                                    break
+                            except queue.Empty:
+                                continue
+                        
+                        # Save combined audio
+                        int_path = self.config.artifacts_dir / f"interruption_{int(time.time())}.wav"
+                        int_recorded = self.audio_capture.save_audio(frames, int_path)
+                        
+                        if int_recorded:
+                            int_text = await asyncio.to_thread(self.asr.transcribe, int_recorded)
+                            print(f"> Interruption: {int_text}")
+                            
+                            if "thank you" in int_text.lower():
+                                print("Stopped by user.")
+                                break # Exit Turn Loop -> Go to IDLE
+                            elif "goodbye" in int_text.lower():
+                                print("Goodbye!")
+                                self.shutdown_event.set()
+                                break # Exit Turn Loop
+                            else:
+                                pass
+
+                except subprocess.CalledProcessError as exc:
+                    print(f"[x] Piper/playback error: {exc}")
+                
+                break # End of turns
