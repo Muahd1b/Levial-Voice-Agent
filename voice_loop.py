@@ -216,55 +216,149 @@ def play_audio(audio_path: Path) -> None:
         print(f"[i] Audio ready at {audio_path}; open it manually.")
 
 
+class VoiceAgent:
+    def __init__(self):
+        self.is_running = False
+        self.is_listening = False
+        self.history: list[tuple[str, str]] = []
+        self.status_callback = None
+        self.stop_event = threading.Event()
+        self.listen_thread = None
+
+    def set_status_callback(self, callback):
+        self.status_callback = callback
+
+    def _emit_status(self, status: str, data: dict = None):
+        if self.status_callback:
+            self.status_callback(status, data)
+
+    def start(self):
+        self.is_running = True
+        print("[VoiceAgent] Started")
+
+    def stop(self):
+        self.is_running = False
+        self.stop_listening()
+        print("[VoiceAgent] Stopped")
+
+    def start_listening(self):
+        if self.is_listening:
+            return
+        self.is_listening = True
+        self.stop_event.clear()
+        self.listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.listen_thread.start()
+        self._emit_status("listening")
+        print("[VoiceAgent] Start listening")
+
+    def stop_listening(self):
+        if not self.is_listening:
+            return
+        self.is_listening = False
+        self.stop_event.set()
+        if self.listen_thread:
+            self.listen_thread.join(timeout=1.0)
+        self._emit_status("idle")
+        print("[VoiceAgent] Stop listening")
+
+    def _listen_loop(self):
+        # This is a simplified version of the original record_utterance logic
+        # adapted to run in a thread and check stop_event
+        audio_queue: queue.Queue[np.ndarray] = queue.Queue()
+        frames: list[np.ndarray] = []
+
+        def callback(indata, frames_count, time_info, status):
+            if status:
+                print(f"[audio] {status}", file=sys.stderr)
+            audio_queue.put(indata.copy())
+
+        try:
+            with sd.InputStream(
+                samplerate=MIC_SAMPLE_RATE,
+                channels=MIC_CHANNELS,
+                dtype="float32",
+                callback=callback,
+            ):
+                while not self.stop_event.is_set():
+                    try:
+                        chunk = audio_queue.get(timeout=0.1)
+                        frames.append(chunk)
+                    except queue.Empty:
+                        continue
+        except Exception as e:
+            print(f"[x] Audio recording error: {e}")
+            self._emit_status("error", {"message": str(e)})
+            return
+
+        if not frames:
+            return
+
+        self._emit_status("processing")
+        
+        # Process audio
+        audio = np.concatenate(frames, axis=0)
+        audio = np.clip(audio, -1.0, 1.0)
+        audio_int16 = (audio * 32767).astype(np.int16)
+
+        timestamp = int(time.time())
+        wav_path = ARTIFACT_DIR / f"utterance_{timestamp}.wav"
+        with wave.open(str(wav_path), "wb") as wf:
+            wf.setnchannels(MIC_CHANNELS)
+            wf.setsampwidth(2)
+            wf.setframerate(MIC_SAMPLE_RATE)
+            wf.writeframes(audio_int16.tobytes())
+
+        self._process_utterance(wav_path)
+
+    def _process_utterance(self, audio_path: Path):
+        try:
+            transcript = transcribe(audio_path)
+            if not transcript:
+                self._emit_status("idle")
+                return
+            
+            self._emit_status("transcript", {"text": transcript})
+
+            prompt = build_prompt(self.history, transcript)
+            reply = query_ollama(prompt)
+            
+            self._emit_status("response", {"text": reply})
+
+            self.history.append(("user", transcript))
+            self.history.append(("assistant", reply))
+            if MAX_HISTORY_TURNS and len(self.history) > MAX_HISTORY_TURNS:
+                self.history = self.history[-MAX_HISTORY_TURNS:]
+
+            self._emit_status("speaking")
+            audio_reply = synthesize_speech(reply)
+            play_audio(audio_reply)
+            self._emit_status("idle")
+
+        except Exception as e:
+            print(f"[x] Processing error: {e}")
+            self._emit_status("error", {"message": str(e)})
+            self._emit_status("idle")
+
 def main() -> None:
+    # Legacy main for CLI usage
+    agent = VoiceAgent()
+    agent.start()
+    
     _require_file(WHISPER_BIN, "Whisper CLI binary (build whisper.cpp)")
     _require_file(WHISPER_MODEL, f"Whisper model {WHISPER_MODEL}")
     _require_file(PIPER_MODEL, f"Piper voice model {PIPER_MODEL}")
 
-    history: list[tuple[str, str]] = []
-    print("Local Voice Chat Agent")
-    print("Ensure `ollama serve` is running and Piper/Whisper paths are valid.")
+    print("Local Voice Chat Agent (CLI Mode)")
     print("Controls: press Enter to start speaking, Enter again to stop, 'q' to quit.")
 
     while True:
         user_cmd = input("\nPress Enter to speak or type 'q' to quit: ").strip().lower()
         if user_cmd in {"q", "quit", "exit"}:
-            print("Goodbye!")
             break
-
-        audio_path = record_utterance()
-        if not audio_path:
-            continue
-
-        try:
-            transcript = transcribe(audio_path)
-        except subprocess.CalledProcessError as exc:
-            print(f"[x] Whisper failed: {exc}")
-            continue
-
-        if not transcript:
-            print("[!] Empty transcript, skipping.")
-            continue
-
-        prompt = build_prompt(history, transcript)
-        try:
-            reply = query_ollama(prompt)
-        except subprocess.CalledProcessError as exc:
-            print(f"[x] Ollama error: {exc.stderr}")
-            continue
-
-        history.append(("user", transcript))
-        history.append(("assistant", reply))
-        if MAX_HISTORY_TURNS and len(history) > MAX_HISTORY_TURNS:
-            # Keep most recent turns only
-            history = history[-MAX_HISTORY_TURNS:]
-
-        try:
-            audio_reply = synthesize_speech(reply)
-            play_audio(audio_reply)
-        except subprocess.CalledProcessError as exc:
-            print(f"[x] Piper/playback error: {exc}")
-
+        
+        agent.start_listening()
+        input("Press Enter to stop recording...")
+        agent.stop_listening()
 
 if __name__ == "__main__":
     main()

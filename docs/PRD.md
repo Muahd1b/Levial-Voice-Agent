@@ -58,6 +58,7 @@ Success Criteria
 In Scope (v2.0)
 
 - **Core Voice Loop:** Wake word -> ASR -> LLM -> TTS.
+- **Web Interface:** Visual frontend for interaction and status monitoring.
 - **MCP Client:** Dynamic discovery and execution of tools.
 - **Memory System:** ChromaDB (Vector) + JSON Profile (Structured).
 - **Domain Modules:**
@@ -105,6 +106,7 @@ Core Use Cases
   5.2 Flows
 
 - **Tool Use:** User: "What's the weather?" -> THINKING -> EXECUTING (Call Weather Tool) -> THINKING (Synthesize answer) -> SPEAKING.
+- **Visual Feedback:** Web UI shows real-time state (Listening, Thinking, Speaking) and conversation history.
 
 ---
 
@@ -121,6 +123,8 @@ Component Overview
   - **Long-term (Episodic):** ChromaDB vector store.
   - **User Profile:** JSON file for explicit preferences.
 - **Domain Agents:** Specialized logic (e.g., Research Planner) that may override the default chat loop for specific tasks.
+- **Web Interface:** Next.js application for visual interaction and control.
+- **API Server:** FastAPI server providing WebSocket connection for the Web UI.
 
 ---
 

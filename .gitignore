@@ -39,6 +39,8 @@ artifacts/
 *.json
 !config/default.json
 !en_US-lessac-medium.onnx.json
+!web-ui/**/*.json
+!web-ui/lib/
 
 # Whisper.cpp
 whisper.cpp/

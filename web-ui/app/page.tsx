@@ -1,0 +1,104 @@
+"use client";
+
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Mic, Database, Brain, Wifi, WifiOff } from "lucide-react";
+import { WaveAnimation } from "@/components/wave-animation";
+import { MCPManager } from "@/components/mcp-manager";
+import { KnowledgeGraph } from "@/components/knowledge-graph";
+import { useVoiceAgent } from "@/hooks/use-voice-agent";
+import { Card, CardContent } from "@/components/ui/card";
+
+export default function Home() {
+  const { status, transcript, lastResponse, isConnected, startRecording, stopRecording } = useVoiceAgent();
+
+  const handleMicClick = () => {
+    if (status === "listening") {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 sm:p-8">
+      <div className="w-full max-w-4xl space-y-8">
+        <div className="text-center space-y-2 relative">
+          <div className="absolute right-0 top-0">
+            {isConnected ? (
+              <div className="flex items-center gap-1 text-green-500 text-xs font-medium bg-green-500/10 px-2 py-1 rounded-full">
+                <Wifi className="h-3 w-3" />
+                <span>Connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-red-500 text-xs font-medium bg-red-500/10 px-2 py-1 rounded-full">
+                <WifiOff className="h-3 w-3" />
+                <span>Disconnected</span>
+              </div>
+            )}
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+            Levial
+          </h1>
+          <p className="text-lg text-muted-foreground">
+            Your personal AI assistant with local intelligence
+          </p>
+        </div>
+
+        <Tabs defaultValue="talk" className="w-full">
+          <div className="flex justify-center mb-8">
+            <TabsList className="grid w-full max-w-md grid-cols-3 h-12">
+              <TabsTrigger value="talk" className="text-base">
+                <Mic className="mr-2 h-4 w-4" />
+                Talk
+              </TabsTrigger>
+              <TabsTrigger value="mcp" className="text-base">
+                <Database className="mr-2 h-4 w-4" />
+                MCP
+              </TabsTrigger>
+              <TabsTrigger value="knowledge" className="text-base">
+                <Brain className="mr-2 h-4 w-4" />
+                Knowledge
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="talk" className="space-y-4">
+            <div className="flex flex-col items-center justify-center py-8 gap-8">
+              <WaveAnimation status={status} onClick={handleMicClick} />
+              
+              {(transcript || lastResponse) && (
+                <div className="w-full max-w-2xl space-y-4">
+                  {transcript && (
+                    <Card className="bg-muted/50 border-none">
+                      <CardContent className="p-4">
+                        <p className="text-sm font-medium text-muted-foreground mb-1">You said:</p>
+                        <p className="text-lg">{transcript}</p>
+                      </CardContent>
+                    </Card>
+                  )}
+                  {lastResponse && (
+                    <Card className="bg-primary/5 border-primary/20">
+                      <CardContent className="p-4">
+                        <p className="text-sm font-medium text-primary mb-1">Levial said:</p>
+                        <p className="text-lg">{lastResponse}</p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="mcp" className="space-y-4">
+            <MCPManager />
+          </TabsContent>
+
+          <TabsContent value="knowledge" className="space-y-4">
+            <KnowledgeGraph />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
