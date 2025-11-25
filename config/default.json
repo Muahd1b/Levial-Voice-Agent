@@ -13,9 +13,9 @@
     }
   },
   "wake_word": {
-    "enabled": false,
-    "keyword": "nova",
-    "auto_listen": false
+    "enabled": true,
+    "keyword": "hey_jarvis",
+    "auto_listen": true
   },
   "timeouts": {
     "recording_max_sec": 30,

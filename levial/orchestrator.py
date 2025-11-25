@@ -84,9 +84,24 @@ class ConversationOrchestrator:
         )
         self.speech_detector = SpeechDetector()
         
+        # Status Callback for WebSocket
+        self.status_callback = None
+        
         # Shutdown Control
         self.shutdown_event = threading.Event()
         self.input_listener = InputListener(callback=self.shutdown_event.set)
+
+    def set_status_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
+        """Set callback for status updates (for WebSocket broadcasting)."""
+        self.status_callback = callback
+
+    def _emit_status(self, status: str, data: Dict[str, Any] = None):
+        """Emit status update to WebSocket clients."""
+        if self.status_callback:
+            payload = {"status": status}
+            if data:
+                payload.update(data)
+            self.status_callback(status, payload)
 
     async def start(self):
         """Async entry point to initialize MCP and run the loop."""
@@ -131,6 +146,7 @@ class ConversationOrchestrator:
         while not self.shutdown_event.is_set():
             # --- STATE: IDLE (Listening for Wake Word) ---
             print("[State] IDLE - Waiting for wake word...")
+            self._emit_status("idle")
             self.wake_event.clear()
             self.detected_wake_word = None
             
@@ -156,22 +172,35 @@ class ConversationOrchestrator:
                 break
 
             print(f"[!] Wake Word Detected: {self.detected_wake_word}")
+            self._emit_status("wake_word_detected", {"wake_word": self.detected_wake_word})
             
             if self.detected_wake_word and "alexa" in self.detected_wake_word.lower():
-                print("Goodbye! (Triggered by 'Alexa')")
-                break
+                print("[i] 'Alexa' detected - Pausing listening. Say 'Hey Jarvis' to resume.")
+                self._emit_status("idle")
+                continue  # Return to wake word listening instead of exiting
             
             # --- STATE: LISTENING (User Command) ---
             print("[State] LISTENING - Speak now...")
+            self._emit_status("listening")
             timestamp = int(time.time())
             audio_path = self.config.artifacts_dir / f"utterance_{timestamp}.wav"
             
+            # Define volume callback to emit status
+            def volume_callback(level):
+                # Throttle updates to avoid flooding WebSocket? 
+                # For now, just emit. The frontend can handle it or we can throttle here.
+                # Let's throttle to every ~100ms if needed, but for now raw is fine for smoothness.
+                # Actually, let's scale it up a bit for visibility
+                scaled_level = min(level * 5, 1.0) 
+                self._emit_status("audio_level", {"level": scaled_level})
+
             # Record until silence
             recorded_path = await asyncio.to_thread(
                 self.audio_capture.record_until_silence, 
                 output_path=audio_path,
                 silence_threshold=0.01, # Adjust based on mic
-                silence_duration=1.5
+                silence_duration=1.5,
+                volume_callback=volume_callback
             )
             
             if self.shutdown_event.is_set():
@@ -192,6 +221,7 @@ class ConversationOrchestrator:
                 continue
 
             print(f"> User: {transcript}")
+            self._emit_status("transcript", {"text": transcript})
             
             # Check for Termination
             if "goodbye" in transcript.lower():
@@ -214,6 +244,7 @@ class ConversationOrchestrator:
                 full_prompt = self.llm.build_prompt(self.history, transcript, context=context, tools_json=tools_json) 
 
                 print(f"[State] THINKING (Turn {current_turn})...")
+                self._emit_status("thinking", {"turn": current_turn})
                 try:
                     reply = await asyncio.to_thread(self.llm.query, full_prompt)
                 except subprocess.CalledProcessError as exc:
@@ -233,8 +264,12 @@ class ConversationOrchestrator:
                             args = tool_call["arguments"]
                             print(f"[!] Tool Call: {tool_name} on {server_name}")
                             if server_name:
-                                result = await self.mcp_client.call_tool(server_name, tool_name, args)
-                                observation = str(result)
+                                try:
+                                    result = await self.mcp_client.call_tool(server_name, tool_name, args)
+                                    observation = str(result)
+                                except Exception as e:
+                                    print(f"[!] Tool execution failed: {e}")
+                                    observation = f"Error: Tool execution failed: {e}"
                             else:
                                 observation = "Error: Server name missing."
                             self.history.append(("assistant", reply))
@@ -244,12 +279,32 @@ class ConversationOrchestrator:
                     pass
 
                 print(f"> Assistant: {reply}")
+                self._emit_status("response", {"text": reply})
                 self.history.append(("assistant", reply))
                 self.memory_manager.add_interaction("user", transcript)
                 self.memory_manager.add_interaction("assistant", reply)
                 
+                # Extract and update knowledge using LLM
+                try:
+                    print("[State] EXTRACTING KNOWLEDGE...")
+                    knowledge = self.memory_manager.extract_and_update_knowledge(
+                        user_message=transcript,
+                        assistant_message=reply,
+                        llm_query_fn=lambda prompt: self.llm.query(prompt)
+                    )
+                    # Broadcast knowledge update to frontend
+                    profile = self.memory_manager.user_profile.get_profile()
+                    self._emit_status("knowledge_update", {
+                        "profile": profile,
+                        "latest_extraction": knowledge
+                    })
+                    print(f"[Knowledge] Updated: {knowledge}")
+                except Exception as e:
+                    print(f"[!] Knowledge extraction failed: {e}")
+                
                 # --- STATE: SPEAKING (with Barge-In) ---
                 print("[State] SPEAKING...")
+                self._emit_status("speaking")
                 try:
                     audio_reply = await asyncio.to_thread(self.tts.synthesize, reply, self.config.artifacts_dir)
                     

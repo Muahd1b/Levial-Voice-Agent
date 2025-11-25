@@ -53,3 +53,98 @@ class MemoryManager:
                 memory_str += f"- {mem['metadata'].get('role', 'unknown')}: {mem['text']}\n"
         
         return f"{profile_str}\n{memory_str}"
+
+    def extract_and_update_knowledge(self, user_message: str, assistant_message: str, llm_query_fn) -> Dict[str, Any]:
+        """
+        Extract knowledge from the conversation using LLM and update user profile.
+        
+        Args:
+            user_message: What the user said
+            assistant_message: What the assistant responded
+            llm_query_fn: Function to call LLM (e.g., lambda prompt: ollama_llm.query(prompt))
+        
+        Returns:
+            Dict with extracted knowledge
+        """
+        extraction_prompt = f"""Based on this conversation, extract any facts about the user that should be remembered.
+
+User: {user_message}
+Assistant: {assistant_message}
+
+Extract ONLY factual information about the user (name, preferences, interests, locations, relationships, etc.).
+Format your response as JSON:
+{{
+  "facts": {{
+    "key": "value"
+  }},
+  "interests": ["topic1", "topic2"],
+  "name": "their name if mentioned"
+}}
+
+If nothing new was learned, return: {{"facts": {{}}, "interests": [], "name": null}}
+Only extract information explicitly stated or strongly implied. Do not make assumptions.
+"""
+        
+        try:
+            # Call LLM to extract knowledge
+            result = llm_query_fn(extraction_prompt)
+            
+            # Parse JSON from response
+            import json
+            # Try to find JSON in the response
+            start_idx = result.find('{')
+            end_idx = result.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                json_str = result[start_idx:end_idx+1]
+                knowledge = json.loads(json_str)
+                
+                # Update user profile with extracted knowledge
+                if knowledge.get("name"):
+                    self.user_profile.profile_data["name"] = knowledge["name"]
+                
+                if knowledge.get("facts"):
+                    for key, value in knowledge["facts"].items():
+                        self.user_profile.profile_data["facts"][key] = value
+                
+                if knowledge.get("interests"):
+                    for interest in knowledge["interests"]:
+                        self.user_profile.update_interest(interest)
+                
+                # Save the updated profile
+                self.user_profile.save_profile()
+                
+                logger.info(f"Extracted knowledge: {knowledge}")
+                return knowledge
+            else:
+                logger.warning("No JSON found in LLM response for knowledge extraction")
+                return {"facts": {}, "interests": [], "name": None}
+                
+        except Exception as e:
+            logger.error(f"Knowledge extraction failed: {e}")
+            return {"facts": {}, "interests": [], "name": None}
+
+    def update_knowledge(self, updates: Dict[str, Any]):
+        """
+        Manually update the user profile.
+        
+        Args:
+            updates: Dictionary containing updates (name, interests, facts)
+        """
+        try:
+            if "name" in updates:
+                self.user_profile.profile_data["name"] = updates["name"]
+            
+            if "interests" in updates:
+                self.user_profile.profile_data["interests"] = updates["interests"]
+                
+            if "facts" in updates:
+                # Merge facts instead of overwriting entirely if possible, 
+                # but for simplicity let's allow full overwrite if passed
+                self.user_profile.profile_data["facts"] = updates["facts"]
+                
+            self.user_profile.save_profile()
+            logger.info(f"Manual profile update: {updates}")
+            return self.user_profile.get_profile()
+        except Exception as e:
+            logger.error(f"Manual profile update failed: {e}")
+            raise e

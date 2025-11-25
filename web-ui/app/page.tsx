@@ -9,15 +9,7 @@ import { useVoiceAgent } from "@/hooks/use-voice-agent";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function Home() {
-  const { status, transcript, lastResponse, isConnected, startRecording, stopRecording } = useVoiceAgent();
-
-  const handleMicClick = () => {
-    if (status === "listening") {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
+  const { status, transcript, lastResponse, isConnected, userProfile, updateKnowledge, audioLevel } = useVoiceAgent();
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 sm:p-8">
@@ -40,7 +32,7 @@ export default function Home() {
             Levial
           </h1>
           <p className="text-lg text-muted-foreground">
-            Your personal AI assistant with local intelligence
+            Always-on voice assistant • Say "Hey Jarvis" to wake me
           </p>
         </div>
 
@@ -64,7 +56,7 @@ export default function Home() {
 
           <TabsContent value="talk" className="space-y-4">
             <div className="flex flex-col items-center justify-center py-8 gap-8">
-              <WaveAnimation status={status} onClick={handleMicClick} />
+              <WaveAnimation status={status} audioLevel={audioLevel} />
               
               {(transcript || lastResponse) && (
                 <div className="w-full max-w-2xl space-y-4">
@@ -94,7 +86,7 @@ export default function Home() {
           </TabsContent>
 
           <TabsContent value="knowledge" className="space-y-4">
-            <KnowledgeGraph />
+            <KnowledgeGraph userProfile={userProfile} onUpdate={updateKnowledge} />
           </TabsContent>
         </Tabs>
       </div>

@@ -1,112 +1,235 @@
-"use client";
-
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, User, Calendar, MapPin, Briefcase } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { motion } from "framer-motion";
+import { Brain, User, Heart, Pencil, Save, X, Plus, Trash2 } from "lucide-react";
 
-interface KnowledgeItem {
-  id: string;
-  category: "personal" | "location" | "work" | "schedule";
-  key: string;
-  value: string;
-  icon: React.ReactNode;
+interface KnowledgeGraphProps {
+  userProfile?: any;
+  onUpdate?: (updates: any) => void;
 }
 
-export function KnowledgeGraph() {
-  const knowledgeItems: KnowledgeItem[] = [
-    {
-      id: "1",
-      category: "personal",
-      key: "Name",
-      value: "Jonas",
-      icon: <User className="h-4 w-4" />,
-    },
-    {
-      id: "2",
-      category: "location",
-      key: "Location",
-      value: "Germany",
-      icon: <MapPin className="h-4 w-4" />,
-    },
-    {
-      id: "3",
-      category: "work",
-      key: "Focus",
-      value: "AI Development",
-      icon: <Briefcase className="h-4 w-4" />,
-    },
-    {
-      id: "4",
-      category: "schedule",
-      key: "Timezone",
-      value: "CET (UTC+1)",
-      icon: <Calendar className="h-4 w-4" />,
-    },
-  ];
+export function KnowledgeGraph({ userProfile, onUpdate }: KnowledgeGraphProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState<any>(null);
 
-  const categoryColors = {
-    personal: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-    location: "bg-green-500/10 text-green-600 border-green-500/20",
-    work: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-    schedule: "bg-orange-500/10 text-orange-600 border-orange-500/20",
+  // Use real profile data or fallback to demo data
+  const profile = userProfile || {
+    name: "User",
+    interests: [],
+    facts: {},
+    preferences: {}
   };
 
+  const startEditing = () => {
+    setEditData(JSON.parse(JSON.stringify(profile))); // Deep copy
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setEditData(null);
+  };
+
+  const saveEditing = () => {
+    if (onUpdate) {
+      onUpdate(editData);
+    }
+    setIsEditing(false);
+  };
+
+  const updateField = (category: string, key: string, value: string) => {
+    if (!editData) return;
+    
+    if (category === "personal") {
+      setEditData({ ...editData, [key]: value });
+    } else if (category === "facts") {
+      setEditData({ ...editData, facts: { ...editData.facts, [key]: value } });
+    }
+  };
+
+  const updateInterest = (index: number, value: string) => {
+    if (!editData) return;
+    const newInterests = [...editData.interests];
+    newInterests[index] = value;
+    setEditData({ ...editData, interests: newInterests });
+  };
+
+  const addInterest = () => {
+    if (!editData) return;
+    setEditData({ ...editData, interests: [...editData.interests, ""] });
+  };
+
+  const removeInterest = (index: number) => {
+    if (!editData) return;
+    const newInterests = [...editData.interests];
+    newInterests.splice(index, 1);
+    setEditData({ ...editData, interests: newInterests });
+  };
+
+  const removeFact = (key: string) => {
+    if (!editData) return;
+    const newFacts = { ...editData.facts };
+    delete newFacts[key];
+    setEditData({ ...editData, facts: newFacts });
+  };
+
+  // Display data (either current profile or editData if editing)
+  const displayData = isEditing ? editData : profile;
+
+  const knowledgeItems = [
+    {
+      category: "Personal",
+      icon: User,
+      color: "bg-blue-500/10 text-blue-500",
+      items: [
+        { label: "Name", value: displayData.name, key: "name", editable: true }
+      ]
+    },
+    {
+      category: "Interests",
+      icon: Heart,
+      color: "bg-pink-500/10 text-pink-500",
+      items: displayData.interests?.map((interest: string, i: number) => ({
+        label: `Interest ${i + 1}`,
+        value: interest,
+        index: i,
+        isList: true
+      })) || []
+    },
+    {
+      category: "Facts",
+      icon: Brain,
+      color: "bg-purple-500/10 text-purple-500",
+      items: Object.entries(displayData.facts || {}).map(([key, value]) => ({
+        label: key,
+        value: value as string,
+        key: key,
+        isFact: true
+      }))
+    }
+  ];
+
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Brain className="h-5 w-5 text-primary" />
-            <div>
-              <CardTitle>Knowledge Base</CardTitle>
-              <CardDescription>
-                What the agent knows about you
-              </CardDescription>
-            </div>
+    <div className="space-y-6">
+      <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              My Knowledge About You
+            </CardTitle>
+            <CardDescription>
+              Information learned from our conversations
+            </CardDescription>
+          </div>
+          <div>
+            {!isEditing ? (
+              <Button variant="outline" size="sm" onClick={startEditing} className="gap-2">
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={cancelEditing}>
+                  <X className="h-4 w-4" /> Cancel
+                </Button>
+                <Button size="sm" onClick={saveEditing}>
+                  <Save className="h-4 w-4" /> Save
+                </Button>
+              </div>
+            )}
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {knowledgeItems.length === 0 ? (
-            <div className="text-center py-8">
-              <Brain className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-sm text-muted-foreground">Knowledge graph empty.</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Start chatting to build your knowledge base.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {knowledgeItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={`p-4 rounded-lg border-2 ${categoryColors[item.category]} transition-all hover:scale-105`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0">{item.icon}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium opacity-70 uppercase tracking-wider">
-                        {item.key}
-                      </p>
-                      <p className="text-sm font-semibold truncate">{item.value}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
       </Card>
 
-      <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <Brain className="h-5 w-5 text-primary mt-0.5" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Adaptive Learning</p>
-              <p className="text-xs text-muted-foreground">
-                The agent learns from your conversations and adapts to your preferences over time.
-              </p>
-            </div>
-          </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {knowledgeItems.map((category, idx) => (
+          <motion.div
+            key={category.category}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: idx * 0.1 }}
+          >
+            <Card className="hover:shadow-lg transition-shadow h-full">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-2 rounded-lg ${category.color}`}>
+                      <category.icon className="h-4 w-4" />
+                    </div>
+                    <CardTitle className="text-lg">{category.category}</CardTitle>
+                  </div>
+                  {isEditing && category.category === "Interests" && (
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={addInterest}>
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {category.items.length > 0 ? (
+                  <div className="space-y-2">
+                    {category.items.map((item: any, i: number) => (
+                      <motion.div
+                        key={i}
+                        className="p-2 rounded-md bg-muted/50 hover:bg-muted transition-colors"
+                      >
+                        <p className="text-xs text-muted-foreground capitalize mb-1">{item.label}</p>
+                        {isEditing ? (
+                          <div className="flex gap-2">
+                            <Input 
+                              value={item.value} 
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                if (item.isList) updateInterest(item.index, e.target.value);
+                                else if (item.isFact) updateField("facts", item.key, e.target.value);
+                                else updateField("personal", item.key, e.target.value);
+                              }}
+                              className="h-8 text-sm"
+                            />
+                            {(item.isList || item.isFact) && (
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  if (item.isList) removeInterest(item.index);
+                                  if (item.isFact) removeFact(item.key);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm font-medium">{item.value}</p>
+                        )}
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-muted-foreground italic mb-2">
+                      No {category.category.toLowerCase()} learned yet
+                    </p>
+                    {isEditing && category.category === "Interests" && (
+                      <Button variant="outline" size="sm" onClick={addInterest}>
+                        Add Interest
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+
+      <Card className="bg-muted/30">
+        <CardContent className="pt-6">
+          <p className="text-sm text-muted-foreground text-center">
+            💡 I learn about you from our conversations, but you can also edit this knowledge manually.
+          </p>
         </CardContent>
       </Card>
     </div>

@@ -29,19 +29,14 @@ class AudioCapture:
         threading.Thread(target=wait_for_stop, daemon=True).start()
         return self._record_loop(output_path, stop_event)
 
-    def record_until_silence(self, output_path: Path, silence_threshold: float = 0.01, silence_duration: float = 2.0) -> Optional[Path]:
+    def record_until_silence(self, output_path: Path, silence_threshold: float = 0.01, silence_duration: float = 2.0, volume_callback=None) -> Optional[Path]:
         """Record audio until silence is detected for a duration."""
         print("Recording... Speak now.")
         stop_event = threading.Event()
         
-        # We need a custom loop or callback to detect silence
-        # For simplicity, we'll use the _record_loop but with a silence check callback?
-        # No, let's implement a blocking record loop here or refactor.
-        # Refactoring _record_loop to take a 'should_stop' predicate is better.
-        
-        return self._record_loop(output_path, stop_event, silence_threshold, silence_duration)
+        return self._record_loop(output_path, stop_event, silence_threshold, silence_duration, volume_callback)
 
-    def _record_loop(self, output_path: Path, stop_event: threading.Event, silence_threshold: float = 0, silence_duration: float = 0) -> Optional[Path]:
+    def _record_loop(self, output_path: Path, stop_event: threading.Event, silence_threshold: float = 0, silence_duration: float = 0, volume_callback=None) -> Optional[Path]:
         audio_queue: queue.Queue[np.ndarray] = queue.Queue()
         frames: list[np.ndarray] = []
 
@@ -66,8 +61,12 @@ class AudioCapture:
                     frames.append(chunk)
                     
                     # Silence Detection Logic
-                    if silence_duration > 0:
+                    if silence_duration > 0 or volume_callback:
                         rms = np.sqrt(np.mean(chunk**2))
+                        
+                        if volume_callback:
+                            volume_callback(float(rms))
+
                         if rms > silence_threshold:
                             last_sound_time = time.time()
                             is_speaking = True
