@@ -19,25 +19,25 @@ export default function Home() {
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 sm:p-8">
       <div className="w-full max-w-4xl space-y-8">
         <div className="text-center space-y-2 relative">
-          <div className="absolute right-0 top-0 flex items-center gap-2">
+          <div className="absolute right-0 top-0 flex flex-row items-center gap-2">
             {isConnected && agentRunning && (
               <Button 
                 variant="ghost" 
                 size="sm"
                 onClick={stopAgent}
-                className="text-red-500 hover:text-red-600 hover:bg-red-500/10 h-7 px-2 text-xs"
+                className="text-red-500 hover:text-red-600 hover:bg-red-500/10 h-auto py-1 px-2 text-xs flex items-center"
               >
                 <Power className="h-3 w-3 mr-1" />
                 Shutdown
               </Button>
             )}
             {isConnected ? (
-              <div className="flex items-center gap-1 text-green-500 text-xs font-medium bg-green-500/10 px-2 py-1 rounded-full">
+              <div className="flex items-center gap-1 text-green-500 text-xs font-medium bg-green-500/10 px-2 py-1 rounded-full whitespace-nowrap">
                 <Wifi className="h-3 w-3" />
                 <span>Connected</span>
               </div>
             ) : (
-              <div className="flex items-center gap-1 text-red-500 text-xs font-medium bg-red-500/10 px-2 py-1 rounded-full">
+              <div className="flex items-center gap-1 text-red-500 text-xs font-medium bg-red-500/10 px-2 py-1 rounded-full whitespace-nowrap">
                 <WifiOff className="h-3 w-3" />
                 <span>Disconnected</span>
               </div>

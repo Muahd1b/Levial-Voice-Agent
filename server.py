@@ -110,18 +110,23 @@ async def get_status():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global orchestrator, orchestrator_thread, orchestrator_running
+    
     await manager.connect(websocket)
+    logger.info("Client connected")
+    
     try:
         # Send initial connection status
         await websocket.send_json({"type": "connected", "message": "Connected to Levial Voice Agent"})
         
-        # Send current user profile
-        current_profile = orchestrator.memory_manager.user_profile.get_profile()
-        await websocket.send_json({
-            "type": "knowledge_update",
-            "profile": current_profile
-        })
-        logger.info(f"Sent initial user profile to client: {current_profile}")
+        # Send current user profile if orchestrator is running
+        if orchestrator:
+            current_profile = orchestrator.memory_manager.user_profile.get_profile()
+            await websocket.send_json({
+                "type": "knowledge_update",
+                "profile": current_profile
+            })
+            logger.info(f"Sent initial user profile to client: {current_profile}")
         
         # Keep connection alive and handle any incoming messages
         while True:
@@ -176,7 +181,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                 elif message.get("type") == "start_agent":
                     # Handle agent start request
-                    global orchestrator_thread, orchestrator_running, orchestrator
                     if not orchestrator_running:
                         logger.info("Starting orchestrator...")
                         
